@@ -25,8 +25,8 @@ function initSlackApp() {
     // Express와 통합하기 위한 Receiver 생성
     receiver = new ExpressReceiver({
         signingSecret: config.SLACK_SIGNING_SECRET,
-        processBeforeResponse: true,
-        endpoints: '/' // index.js에서 /slack/events로 마운트하므로 여기서는 '/'로 설정해야 경로 중첩이 방지됩니다.
+        processBeforeResponse: false, // 즉시 응답을 보내 슬랙의 재시도(Retry)를 방지합니다.
+        endpoints: '/'
     });
 
     app = new App({
@@ -34,11 +34,40 @@ function initSlackApp() {
         receiver: receiver
     });
 
+    // 중복 처리 방지를 위한 최근 처리 ID 캐시 (이벤트 ID, 트리거 ID 등)
+    const processedEvents = new Set();
+    const CACHE_SIZE = 100;
+
+    /**
+     * 중복 이벤트 및 오래된 이벤트를 필터링합니다.
+     */
+    function shouldSkipEvent(body) {
+        if (!body || !body.event_id) return false;
+
+        // 1. 중복 체크
+        if (processedEvents.has(body.event_id)) return true;
+
+        // 2. 시간 체크 (Retry 방지): 1분(60초) 이상 지난 이벤트는 무시
+        const currentTime = Math.floor(Date.now() / 1000);
+        if (body.event_time && (currentTime - body.event_time > 60)) {
+            console.log(`너무 오래된 이벤트 무시 (ID: ${body.event_id}, 시간차: ${currentTime - body.event_time}초)`);
+            return true;
+        }
+
+        processedEvents.add(body.event_id);
+        if (processedEvents.size > CACHE_SIZE) {
+            const firstItem = processedEvents.values().next().value;
+            processedEvents.delete(firstItem);
+        }
+        return false;
+    }
+
     /**
      * 새로운 메시지가 올라왔을 때 (승인 단계 추가)
      */
-    app.message(async ({ message, client }) => {
-        if (message.subtype) return;
+    app.message(async ({ message, client, body }) => {
+        if (message.subtype || message.bot_id) return; // 봇이 보낸 메시지나 특수 메시지는 무시
+        if (shouldSkipEvent(body)) return;
 
         try {
             console.log("새 메시지 수신:", message.text);
@@ -91,6 +120,13 @@ function initSlackApp() {
      */
     app.action('approve_order', async ({ ack, body, client, action }) => {
         await ack(); // 슬랙 서버에 수신 확인 응답
+
+        // 트리거 ID로 중복 체크
+        if (processedEvents.has(body.trigger_id)) {
+            console.log("중복 승인 액션 건너뜀:", body.trigger_id);
+            return;
+        }
+        processedEvents.add(body.trigger_id);
 
         try {
             console.log("승인 데이터 파싱 시도:", action.value);
@@ -146,11 +182,18 @@ function initSlackApp() {
     });
 
     /**
-     * 메시지가 수정되었을 때
+     * 메시지가 수정/삭제되었을 때
      */
-    app.event('message', async ({ event }) => {
+    app.event('message', async ({ event, body }) => {
+        // 봇이 수정한 내역(예: 승인 완료 메시지)은 무시해야 무한 루프를 방지함
+        if (event.bot_id || (event.message && event.message.bot_id)) return;
+
+        if (shouldSkipEvent(body)) return;
+
         if (event.subtype === 'message_changed') {
             const newMessage = event.message;
+            if (newMessage.bot_id) return; // 한 번 더 체크
+
             console.log("메시지 수정됨:", newMessage.text);
 
             try {

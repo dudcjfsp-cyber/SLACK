@@ -164,14 +164,35 @@ async function appendData(spreadsheetId, dataList) {
  */
 async function updateData(spreadsheetId, ts, newDataList) {
     console.log(`수정 요청 수신 - 대상 TS: ${ts}`);
-    await deleteData(spreadsheetId, ts);
-    await appendData(spreadsheetId, newDataList);
+
+    // 1. 기존 데이터 삭제 시도하며 보호된(비고란이 채워진) 항목들을 받아옵니다.
+    const protectedItems = await deleteData(spreadsheetId, ts);
+
+    // 2. 새로운 데이터 중, 시트에서 이미 '보호(잠금)'된 항목은 제외하고 추가합니다.
+    const listToAppend = newDataList.filter(newItem => {
+        const isProtected = protectedItems.some(p =>
+            String(p.company).trim() === String(newItem.company).trim() &&
+            String(p.product).trim() === String(newItem.product).trim()
+        );
+
+        if (isProtected) {
+            console.log(`[필터링] ${newItem.company} - ${newItem.product} 항목은 시트에서 보호 중이므로 업데이트를 건너뜁니다.`);
+        }
+        return !isProtected;
+    });
+
+    if (listToAppend.length > 0) {
+        await appendData(spreadsheetId, listToAppend);
+    } else {
+        console.log("모든 항목이 보호 중이거나 추가할 데이터가 없어 기록을 생략합니다.");
+    }
 }
 
 /**
  * 슬랙_TS를 기준으로 시트의 데이터를 삭제합니다.
  * @param {string} spreadsheetId 시트 ID
  * @param {string} ts 슬랙 메시지 타임스탬프
+ * @returns {Promise<Array>} 삭제되지 않고 보호된 항목 리스트 [{company, product}, ...]
  */
 async function deleteData(spreadsheetId, ts) {
     const sheets = getSheetsClient();
@@ -179,6 +200,10 @@ async function deleteData(spreadsheetId, ts) {
 
     console.log(`삭제 검색 시작 (원본 TS: ${ts})...`);
     const targetTs = String(ts).trim();
+
+    // 1단계: 모든 시트를 스캔하여 어느 한 곳이라도 '보호(비고 입력)'된 항목이 있는지 수집합니다.
+    const protectedItems = [];
+    const allSheetData = [];
 
     for (const sheet of spreadsheet.data.sheets) {
         const sheetName = sheet.properties.title;
@@ -188,26 +213,51 @@ async function deleteData(spreadsheetId, ts) {
             valueRenderOption: 'UNFORMATTED_VALUE'
         });
 
-        const rows = response.data.values;
-        if (!rows) continue;
+        const rows = response.data.values || [];
+        allSheetData.push({ sheet, sheetName, rows });
 
-        let deletedAny = false;
+        for (const row of rows) {
+            const matchIndex = row.findIndex(cell => String(cell).replace(/'/g, "").trim() === targetTs);
+            if (matchIndex !== -1) {
+                const remarks = row[5];
+                if (remarks && String(remarks).trim() !== "") {
+                    // 한 곳이라도 보호되어 있다면 전역 보호 목록에 추가
+                    const alreadyAdded = protectedItems.some(p =>
+                        p.company === row[0] && p.product === row[1]
+                    );
+                    if (!alreadyAdded) {
+                        protectedItems.push({ company: row[0], product: row[1] });
+                    }
+                }
+            }
+        }
+    }
+
+    if (protectedItems.length > 0) {
+        console.log(`전역 보호된 항목 발견: ${protectedItems.map(p => `${p.company}-${p.product}`).join(', ')}`);
+    }
+
+    // 2단계: 수집된 보호 목록을 제외하고 모든 시트에서 삭제를 진행합니다.
+    for (const data of allSheetData) {
+        const { sheet, sheetName, rows } = data;
+
         for (let i = rows.length - 1; i >= 0; i--) {
             const currentRow = rows[i];
-            const matchIndex = currentRow.findIndex(cell => {
-                const cellStr = String(cell).replace(/'/g, "").trim();
-                return cellStr === targetTs;
-            });
+            const matchIndex = currentRow.findIndex(cell => String(cell).replace(/'/g, "").trim() === targetTs);
 
             if (matchIndex !== -1) {
-                // 행 보호 로직: 비고란(index 5)에 내용이 있으면 삭제 건너뜀
-                const remarks = currentRow[5];
-                if (remarks && String(remarks).trim() !== "") {
-                    console.log(`[보호됨] ${sheetName} 탭 ${i + 1}행은 비고란에 내용이 있어 수정을 건너뜁니다. (비고: ${remarks})`);
+                // 이 항목(업체+제품)이 전역 보호 목록에 있는지 확인
+                const isGloballyProtected = protectedItems.some(p =>
+                    String(p.company).trim() === String(currentRow[0]).trim() &&
+                    String(p.product).trim() === String(currentRow[1]).trim()
+                );
+
+                if (isGloballyProtected) {
+                    console.log(`[보존] ${sheetName} 탭 ${i + 1}행은 다른 곳에서 보호 중이므로 유지합니다.`);
                     continue;
                 }
 
-                console.log(`[발견] ${sheetName} 탭 ${i + 1}행 (데이터: ${currentRow[matchIndex]})`);
+                console.log(`[삭제] ${sheetName} 탭 ${i + 1}행 (데이터: ${currentRow[matchIndex]})`);
                 await sheets.spreadsheets.batchUpdate({
                     spreadsheetId,
                     resource: {
@@ -223,10 +273,10 @@ async function deleteData(spreadsheetId, ts) {
                         }]
                     }
                 });
-                deletedAny = true;
             }
         }
     }
+    return protectedItems;
 }
 
 module.exports = {
