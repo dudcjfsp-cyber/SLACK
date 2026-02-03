@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>슬랙-구글 시트 연동 설정 (배포용)</title>
+    <style>
+        body {
+            font-family: 'Malgun Gothic', sans-serif;
+            background-color: #f4f7f6;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 700px;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        input[type="text"],
+        input[type="password"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-family: monospace;
+        }
+
+        textarea {
+            height: 150px;
+            resize: vertical;
+        }
+
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 18px;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        .card {
+            background: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            border-left: 5px solid #3498db;
+        }
+
+        .success {
+            color: #27ae60;
+            text-align: center;
+            font-weight: bold;
+            background: #eafaf1;
+            padding: 10px;
+            border-radius: 6px;
+        }
+
+        .info-box {
+            background: #fff;
+            padding: 15px;
+            border: 1px solid #cce5ff;
+            border-radius: 6px;
+            font-size: 0.85em;
+            line-height: 1.6;
+        }
+
+        code {
+            background: #eee;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>⚙️ 시스템 통합 설정</h1>
+
+        <% if (locals.success) { %>
+            <p class="success">
+                <%= success %>
+            </p>
+            <% } %>
+
+                <form action="/save-config" method="POST">
+                    <!-- 1. 슬랙 연동 안내 -->
+                    <div class="card">
+                        <h3>1. 슬랙 앱 설정 (통신용)</h3>
+                        <div class="info-box">
+                            <b>[설정 방법]</b><br>
+                            1. ngrok 실행 후 발급된 <b>Forwarding 주소</b> 복사<br>
+                            2. 슬랙 대시보드의 아래 두 곳에 주소를 입력하세요:<br>
+                            &nbsp;&nbsp; - <b>Event Subscriptions</b> > Request URL<br>
+                            &nbsp;&nbsp; - <b>Interactivity & Shortcuts</b> > Request URL<br>
+                            <code style="display: block; margin-top: 5px;">http://<%= host %>/slack/events</code>
+                        </div>
+                    </div>
+
+                    <!-- 2. 슬랙 키 입력 -->
+                    <div class="card">
+                        <h3>2. 슬랙 API 키</h3>
+                        <div class="form-group">
+                            <label>Signing Secret</label>
+                            <input type="password" name="SLACK_SIGNING_SECRET"
+                                value="<%= config.SLACK_SIGNING_SECRET || '' %>">
+                        </div>
+                        <div class="form-group">
+                            <label>Bot User OAuth Token (xoxb-...)</label>
+                            <input type="password" name="SLACK_BOT_TOKEN" value="<%= config.SLACK_BOT_TOKEN || '' %>">
+                        </div>
+                    </div>
+
+                    <!-- 3. Gemini AI 키 -->
+                    <div class="card">
+                        <h3>3. AI 분석 설정 (Gemini)</h3>
+                        <div class="form-group">
+                            <label>Gemini API Key</label>
+                            <input type="password" name="GEMINI_API_KEY" value="<%= config.GEMINI_API_KEY || '' %>">
+                        </div>
+                    </div>
+
+                    <!-- 4. 구글 서비스 계정 설정 (핵심!) -->
+                    <div class="card" style="background: #fff9db; border-left-color: #f1c40f;">
+                        <h3>4. Google 시트 연동 (서비스 계정)</h3>
+                        <p style="font-size: 0.85em; color: #666;">
+                            사용자가 수동으로 로그인할 필요가 없는 방식입니다. JSON 키 파일을 메모장으로 열어 내용을 아래에 붙여넣으세요.
+                        </p>
+                        <div class="form-group">
+                            <label>서비스 계정 JSON 키 내용</label>
+                            <textarea name="GOOGLE_SERVICE_ACCOUNT_KEY"
+                                placeholder='{ "type": "service_account", ... }'><%= config.GOOGLE_SERVICE_ACCOUNT_KEY || '' %></textarea>
+                        </div>
+
+                        <div class="info-box" style="border-color: #f1c40f;">
+                            <b>⚠️ 중요: 시트 공유 필수!</b><br>
+                            입력하신 JSON 키 안에 적힌 <code>client_email</code> 주소를 복사하여,<br>
+                            기록할 <b>구글 시트의 [공유] 버튼</b>을 누르고 <b>편집자</b>로 추가해야 합니다.
+                        </div>
+                    </div>
+
+                    <!-- 5. 시트 ID -->
+                    <div class="card">
+                        <h3>5. 대상 스프레드시트</h3>
+                        <div class="form-group">
+                            <label>스프레드시트 ID</label>
+                            <input type="text" name="SELECTED_SHEET_ID" value="<%= config.SELECTED_SHEET_ID || '' %>"
+                                placeholder="주소창의 /d/ 뒤에 있는 문자열">
+                        </div>
+                    </div>
+
+                    <button type="submit">🚀 모든 설정 저장 및 가동</button>
+                </form>
+    </div>
+</body>
+
+</html>

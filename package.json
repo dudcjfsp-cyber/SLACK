@@ -1,0 +1,23 @@
+{
+  "name": "slack-automation",
+  "version": "1.0.0",
+  "description": "Slack to Google Sheets automation with Gemini AI parsing",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@slack/bolt": "^4.6.0",
+    "body-parser": "^1.20.4",
+    "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
+    "express": "^4.22.1",
+    "googleapis": "^144.0.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  }
+}
