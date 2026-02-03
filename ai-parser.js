@@ -118,18 +118,28 @@ async function aiParse(text) {
     `;
 
     try {
+        console.log(`Gemini AI 호출 중 (모델: ${modelName})...`);
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const jsonText = response.text().replace(/```json|```/g, "").trim();
+        const text_resp = response.text();
+        console.log("Gemini 응답 수신 성공");
+
+        const jsonText = text_resp.replace(/```json|```/g, "").trim();
         const parsed = JSON.parse(jsonText);
 
-        // AI 결과에 대해서도 한 번 더 로컬에서 정규화 수행
         return parsed.map(item => ({
             ...item,
             product: normalizeProduct(item.product)
         }));
     } catch (error) {
-        console.error("AI 분석 중 오류 발생:", error);
+        console.error("AI 분석 중 실제 오류 발생:");
+        console.error("- 메시지:", error.message);
+        if (error.response) {
+            console.error("- API 응답 상태:", error.response.status);
+            console.error("- API 에러 데이터:", JSON.stringify(error.response.data));
+        } else {
+            console.error("- 에러 객체:", error);
+        }
         return [];
     }
 }

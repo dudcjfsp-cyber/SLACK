@@ -78,13 +78,13 @@ async function ensureSheetExists(spreadsheetId, sheetName) {
             });
             console.log(`성공: ${sheetName} 탭 생성됨`);
 
-            // 헤더 추가 ([업체명], [제품명], [갯수], [Slack_TS], [날짜])
+            // 헤더 추가 ([업체명], [제품명], [갯수], [Slack_TS], [날짜], [비고])
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
                 range: `${sheetName}!A1`,
                 valueInputOption: 'USER_ENTERED',
                 resource: {
-                    values: [['업체명', '제품명', '갯수', 'Slack_TS', '날짜']]
+                    values: [['업체명', '제품명', '갯수', 'Slack_TS', '날짜', '비고']]
                 }
             });
             console.log(`${sheetName} 시트 헤더 생성 완료`);
@@ -118,14 +118,15 @@ async function appendData(spreadsheetId, dataList) {
 
         for (const item of dataList) {
             const now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
-            const row = [item.company, item.product, item.count, item.ts, now];
-            console.log(`기록 중: [${item.company}] ${item.product} ${item.count} (${now})`);
+            // TS 앞에 '를 붙여 구글 시트가 숫자로 인식해 반올림하는 것을 방지합니다.
+            const row = [item.company, item.product, item.count, `'${item.ts}`, now];
+            console.log(`기록 중: [${item.company}] ${item.product} ${item.count} (TS: ${item.ts})`);
 
             // 1-1. 통합 시트에 추가 (첫 번째 탭)
             try {
                 await sheets.spreadsheets.values.append({
                     spreadsheetId,
-                    range: `${firstSheetName}!A:D`,
+                    range: `${firstSheetName}!A:A`,
                     valueInputOption: 'USER_ENTERED',
                     resource: { values: [row] }
                 });
@@ -139,7 +140,7 @@ async function appendData(spreadsheetId, dataList) {
                 await ensureSheetExists(spreadsheetId, item.company);
                 await sheets.spreadsheets.values.append({
                     spreadsheetId,
-                    range: `${item.company}!A:D`,
+                    range: `${item.company}!A:A`,
                     valueInputOption: 'USER_ENTERED',
                     resource: { values: [row] }
                 });
@@ -162,7 +163,7 @@ async function appendData(spreadsheetId, dataList) {
  * @param {Array} newDataList 새로운 데이터 배열
  */
 async function updateData(spreadsheetId, ts, newDataList) {
-    // 삭제 후 다시 추가하는 방식이 가장 정확합니다. (시트 구조 단순화)
+    console.log(`수정 요청 수신 - 대상 TS: ${ts}`);
     await deleteData(spreadsheetId, ts);
     await appendData(spreadsheetId, newDataList);
 }
@@ -176,20 +177,37 @@ async function deleteData(spreadsheetId, ts) {
     const sheets = getSheetsClient();
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
 
-    // 모든 시트(탭)를 돌며 해당 TS를 가진 행을 찾아 삭제합니다.
+    console.log(`삭제 검색 시작 (원본 TS: ${ts})...`);
+    const targetTs = String(ts).trim();
+
     for (const sheet of spreadsheet.data.sheets) {
         const sheetName = sheet.properties.title;
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${sheetName}!D:D`
+            range: `${sheetName}!A:Z`,
+            valueRenderOption: 'UNFORMATTED_VALUE'
         });
 
         const rows = response.data.values;
         if (!rows) continue;
 
-        // 아래서부터 위로 지워야 행 번호가 꼬이지 않습니다.
+        let deletedAny = false;
         for (let i = rows.length - 1; i >= 0; i--) {
-            if (rows[i][0] === ts) {
+            const currentRow = rows[i];
+            const matchIndex = currentRow.findIndex(cell => {
+                const cellStr = String(cell).replace(/'/g, "").trim();
+                return cellStr === targetTs;
+            });
+
+            if (matchIndex !== -1) {
+                // 행 보호 로직: 비고란(index 5)에 내용이 있으면 삭제 건너뜀
+                const remarks = currentRow[5];
+                if (remarks && String(remarks).trim() !== "") {
+                    console.log(`[보호됨] ${sheetName} 탭 ${i + 1}행은 비고란에 내용이 있어 수정을 건너뜁니다. (비고: ${remarks})`);
+                    continue;
+                }
+
+                console.log(`[발견] ${sheetName} 탭 ${i + 1}행 (데이터: ${currentRow[matchIndex]})`);
                 await sheets.spreadsheets.batchUpdate({
                     spreadsheetId,
                     resource: {
@@ -205,6 +223,7 @@ async function deleteData(spreadsheetId, ts) {
                         }]
                     }
                 });
+                deletedAny = true;
             }
         }
     }
