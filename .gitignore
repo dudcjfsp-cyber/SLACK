@@ -6,3 +6,10 @@ config.json
 dist/
 build/
 database.sqlite
+
+# 추가된 보안 규칙
+*.zip
+*.json
+!package.json
+!package-lock.json
+!ai_parser_rules.json  # 혹시 나중에 추가될 수 있는 설정 파일 제외 예시
